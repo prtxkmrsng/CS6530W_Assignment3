@@ -61,7 +61,9 @@ runsh "$(flow_cmd 5)"; prc=$RC
 runsh "$(ike_logs_cmd 3)"
 cap_stop
 
-runsh "tcpdump -nn -# -v -r $P"
+if [[ -s "$P" ]]; then
+  runsh "tcpdump -nn -# -v -r $P"
+fi
 
 ik=0; ch=0
 ike_up && ik=1

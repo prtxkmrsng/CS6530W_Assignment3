@@ -24,13 +24,19 @@ cap_start "$P" "$WAN_IF" icmp
 runsh "$(flow_cmd 5)"; prc=$RC
 cap_stop
 
-runsh "tcpdump -nn -# -r $P"
-runsh "tcpdump -nn -A -r $P | grep -m3 -n -- $ROLL_GREP"
+if [[ -s "$P" ]]; then
+  runsh "tcpdump -nn -# -r $P"
+  runsh "tcpdump -nn -A -r $P | grep -m3 -n -- $ROLL_GREP"
+fi
 
 n=$(pk "$P" icmp)
 h=$(payload_hits "$P")
 x=$(ip xfrm state 2>/dev/null | grep -c '^src' || true)
-inner=$(tcpdump -nn -r "$P" icmp 2>/dev/null | grep -c "$HOST_IP > $PEER_HOST" || true)
+if [[ -s "$P" ]]; then
+  inner=$(tcpdump -nn -r "$P" icmp 2>/dev/null | grep -c "$HOST_IP > $PEER_HOST" || true)
+else
+  inner=0
+fi
 
 say "ping_rc=$prc icmp_pkts=$n inner_matches=$inner payload_hits=$h xfrm_states=$x"
 

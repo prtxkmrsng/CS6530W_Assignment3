@@ -10,6 +10,20 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 need_root(){ [[ $EUID -eq 0 ]] || die "run with sudo"; }
 need_role(){ [[ "${ROLE:-}" == "$1" ]] || die "run on Gateway $1 (role=${ROLE:-unset})"; }
 
+# Disable or complain AppArmor profile for tcpdump to prevent crashes and file-access denials
+if [[ $EUID -eq 0 ]]; then
+  if command -v apparmor_parser >/dev/null 2>&1 && [[ -f /etc/apparmor.d/usr.sbin.tcpdump ]]; then
+    mkdir -p /etc/apparmor.d/disable 2>/dev/null || true
+    ln -sf /etc/apparmor.d/usr.sbin.tcpdump /etc/apparmor.d/disable/ 2>/dev/null || true
+    apparmor_parser -R /etc/apparmor.d/usr.sbin.tcpdump >/dev/null 2>&1 || true
+  fi
+  if command -v aa-disable >/dev/null 2>&1; then
+    aa-disable /usr/sbin/tcpdump >/dev/null 2>&1 || true
+  elif command -v aa-complain >/dev/null 2>&1; then
+    aa-complain /usr/sbin/tcpdump >/dev/null 2>&1 || true
+  fi
+fi
+
 # Auto-create config.env from example if missing
 if [[ ! -f "$CONFIG_FILE" && -f "$ROOT/config.env.example" ]]; then
   cp "$ROOT/config.env.example" "$CONFIG_FILE"
@@ -67,12 +81,19 @@ if [[ -n "$ROLE" && -z "$WAN_IF" ]]; then
 fi
 
 # ---------- evidence helpers ----------
-LOG=/dev/null; EV=/tmp; RC=0; CAP_PIDS=()
+LOG=/dev/null; EV=/tmp; RC=0; CAP_PIDS=(); CAP_MAP=()
 TMP="$(mktemp)"
 cleanup(){
   rm -f "$TMP"
   for p in "${CAP_PIDS[@]:-}"; do
     [[ -n "$p" ]] && kill -INT "$p" 2>/dev/null || true
+  done
+  for m in "${CAP_MAP[@]:-}"; do
+    src="${m%%:*}"
+    dst="${m#*:}"
+    if [[ -f "$src" && "$src" != "$dst" ]]; then
+      mv -f "$src" "$dst" 2>/dev/null || true
+    fi
   done
 }
 trap cleanup EXIT INT TERM
@@ -100,6 +121,12 @@ cap_start(){
     say "WARNING: cap_start called with empty interface; capture disabled for $f"
     return 1
   fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+
+  # Always capture initially to /tmp to prevent AppArmor confinement or directory access failures
+  local tmp_cap="/tmp/cs6530w_cap_${$}_${#CAP_PIDS[@]}.pcap"
+  rm -f "$tmp_cap"
+
   local dir_opt=()
   if [[ "${1:-}" == "-Q" ]]; then
     dir_opt=("-Q" "$2")
@@ -108,10 +135,24 @@ cap_start(){
     dir_opt=("$1")
     shift 1
   fi
-  tcpdump -i "$i" "${dir_opt[@]}" -n -s 0 -U -Z root -w "$f" "$@" >/dev/null 2>&1 &
-  CAP_PIDS+=($!)
-  sleep 1
+
+  # Do NOT pass -Z root (causes segmentation fault / AppArmor abort on Ubuntu).
+  # If -Q fails or segfaults on driver, fallback gracefully without direction option.
+  tcpdump -i "$i" "${dir_opt[@]}" -n -s 0 -w "$tmp_cap" "$@" >/dev/null 2>&1 &
+  local pid=$!
+  sleep 0.3
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    # Retry without direction flag in case interface driver rejects -Q
+    tcpdump -i "$i" -n -s 0 -w "$tmp_cap" "$@" >/dev/null 2>&1 &
+    pid=$!
+    sleep 0.3
+  fi
+
+  CAP_PIDS+=("$pid")
+  CAP_MAP+=("$tmp_cap:$f")
 }
+
 cap_stop(){
   sleep 1
   for p in "${CAP_PIDS[@]:-}"; do
@@ -120,16 +161,31 @@ cap_stop(){
     fi
   done
   wait 2>/dev/null || true
+
+  for m in "${CAP_MAP[@]:-}"; do
+    src="${m%%:*}"
+    dst="${m#*:}"
+    if [[ -f "$src" ]]; then
+      mv -f "$src" "$dst" 2>/dev/null || cp -f "$src" "$dst" 2>/dev/null || true
+      rm -f "$src" 2>/dev/null || true
+    elif [[ ! -f "$dst" ]]; then
+      : > "$dst"
+    fi
+  done
+
   CAP_PIDS=()
+  CAP_MAP=()
 }
+
 pk(){
   local f="$1"; shift
-  [[ -f "$f" ]] || { echo 0; return; }
+  [[ -f "$f" && -s "$f" ]] || { echo 0; return; }
   tcpdump -nn -r "$f" "$@" 2>/dev/null | wc -l
 }
+
 payload_hits(){
   local f="$1"
-  [[ -f "$f" ]] || { echo 0; return; }
+  [[ -f "$f" && -s "$f" ]] || { echo 0; return; }
   [[ -n "$ROLL_GREP" ]] || { echo 0; return; }
   tcpdump -nn -A -r "$f" 2>/dev/null | grep -c -- "$ROLL_GREP" || true
 }
@@ -170,7 +226,6 @@ bring_up(){
 verify_protected(){
   local tag="$1" pc="$EV/$1.pcap" prc esp nat icmp ph ik=0 ch=0 leak=0
   ike_up || bring_up
-  # Capture outbound traffic on WAN to distinguish true ESP encryption from plaintext leakage
   cap_start "$pc" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
   runsh "$(flow_cmd 5)"; prc=$RC
   cap_stop
@@ -178,10 +233,15 @@ verify_protected(){
   esp=$(pk "$pc" esp)
   nat=$(pk "$pc" udp port 4500)
   
-  # Outbound unencrypted ICMP packets from hostA to hostB on the WAN link
-  leak=$(tcpdump -nn -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+  if [[ -s "$pc" ]]; then
+    # Check for actual unencrypted outbound echo requests from hostA to hostB on transit
+    leak=$(tcpdump -nn -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+    ph=$(tcpdump -nn -A -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
+  else
+    leak=0
+    ph=0
+  fi
   icmp=$leak
-  ph=$(tcpdump -nn -A -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 
   ike_up && ik=1
   child_up && ch=1

@@ -25,15 +25,15 @@ Think of two offices connected by a public road.
 
 Each Ubuntu Server VM requires two virtual network adapters:
 
-| Adapter | Type | Network Name | Purpose |
+| Adapter | VMware Workstation Pro | VirtualBox | Purpose |
 |---|---|---|---|
-| **Adapter 1** | NAT | VMnet8 (Default NAT) | Internet connectivity for `apt` package downloads |
-| **Adapter 2** | LAN Segment | `transit` | Isolated Layer-2 link between VM 1 and VM 2 |
+| **Adapter 1** | NAT (VMnet8) | NAT | Internet connectivity for `apt` package downloads |
+| **Adapter 2** | LAN Segment (`transit`) or Host-only (VMnet1) | Internal Network (`transit`) | Isolated Layer-2 transit link between VM 1 and VM 2 |
 
 #### Steps in VMware Workstation Pro:
 1. Select **VM 1 (Site A)** in VMware Workstation.
 2. Click **Edit virtual machine settings** (or `VM -> Settings`).
-3. Ensure **Network Adapter** is set to **NAT**.
+3. Ensure **Network Adapter 1** is set to **NAT**.
 4. Click **Add...** → select **Network Adapter** → click **Finish**.
 5. Select the newly added **Network Adapter 2**:
    - Select **LAN Segment**.
@@ -41,9 +41,15 @@ Each Ubuntu Server VM requires two virtual network adapters:
    - In the dropdown, choose `transit`.
    - Ensure **Connected** and **Connect at power on** checkboxes are BOTH checked.
 6. Repeat the exact same step for **VM 2 (Site B)**, selecting the same `transit` LAN segment.
-7. Power on both VMs.
 
-> **Note on Interface Names:** In Ubuntu Server running under VMware, your primary adapter is usually `ens33`, and the second adapter is `ens34` (or `ens38`, `ens35`, `ens160`). The setup script will auto-detect your secondary adapter!
+#### Steps in VirtualBox:
+1. Open **Settings** for VM 1 → **Network**.
+2. **Adapter 1**: Enabled, attached to **NAT**.
+3. **Adapter 2**: Enabled, attached to **Internal Network**, name: `transit`.
+4. Under Advanced, ensure **Promiscuous Mode: Allow All** and **Cable Connected** is checked.
+5. Repeat for VM 2.
+
+> **Note on Interface Names:** In Ubuntu Server, VMware names the second adapter `ens34` (or `ens38`, `ens35`, `ens160`), while VirtualBox names it `enp0s8`. The included setup script (`01_setup_gateway.sh`) **automatically detects** your secondary adapter on either hypervisor!
 
 ---
 

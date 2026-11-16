@@ -14,7 +14,9 @@ cap_stop
 runsh "ipsec statusall"
 runsh "$XS"
 runsh "$XP"
-runsh "tcpdump -nn -# -r $P esp"
+if [[ -s "$P" ]]; then
+  runsh "tcpdump -nn -# -r $P esp"
+fi
 
 native=$(pk "$P" esp)
 nat=$(pk "$P" udp port 4500)

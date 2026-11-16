@@ -47,6 +47,7 @@ PACKAGES=(
   libstrongswan-extra-plugins
   libcharon-extra-plugins
   tcpdump
+  apparmor-utils
   iproute2
   iptables
   zip
@@ -62,6 +63,18 @@ done
 dpkg -s tshark >/dev/null 2>&1 || apt-get install -y -o DPkg::Lock::Timeout=60 tshark >/dev/null 2>&1 || {
   echo "note: tshark not installed (optional)"
 }
+
+# Ensure AppArmor does not restrict tcpdump from writing capture files under $HOME
+if command -v apparmor_parser >/dev/null 2>&1 && [[ -f /etc/apparmor.d/usr.sbin.tcpdump ]]; then
+  mkdir -p /etc/apparmor.d/disable 2>/dev/null || true
+  ln -sf /etc/apparmor.d/usr.sbin.tcpdump /etc/apparmor.d/disable/ 2>/dev/null || true
+  apparmor_parser -R /etc/apparmor.d/usr.sbin.tcpdump >/dev/null 2>&1 || true
+fi
+if command -v aa-disable >/dev/null 2>&1; then
+  aa-disable /usr/sbin/tcpdump >/dev/null 2>&1 || true
+elif command -v aa-complain >/dev/null 2>&1; then
+  aa-complain /usr/sbin/tcpdump >/dev/null 2>&1 || true
+fi
 
 # 2. Detect / Configure transit interface for VMware Workstation Pro
 echo "[2/7] Detecting transit network interface..."

@@ -38,18 +38,19 @@ The goal: traffic **hostA ↔ hostB** must cross the transit link **only as encr
 
 ---
 
-## 2. VMware Workstation Pro Setup Guide
+## 2. Virtual Machine Setup Guide (VMware & VirtualBox)
 
-To ensure everything runs seamlessly in **VMware Workstation Pro**:
+### VMware Workstation Pro:
+1. **Network Adapter 1**: Set to **NAT** (Internet access for `apt`).
+2. **Network Adapter 2**: Add Network Adapter → Set to **LAN Segment** (name: `transit`) or **Host-only** (VMnet1).
+3. Ensure **Connected** and **Connect at power on** are both checked on both VMs.
 
-1. **Virtual Machine Settings (Both VMs):**
-   - **Network Adapter 1**: Set to **NAT** (provides Internet access for `apt`).
-   - **Network Adapter 2**: Click **Add...** → **Network Adapter** → Finish.
-     - Set Network connection to **LAN Segment** and click **LAN Segments...** to create a segment named `transit`.
-     - Select `transit` on **both VM 1 and VM 2**. *(Alternatively, select 'Host-only' VMnet1 on both).*
-     - Ensure **Device status**: **Connected** and **Connect at power on** are both checked.
-2. In Ubuntu Server, VMware names the second adapter `ens34` (or `ens38`, `ens35`, `ens160`).
-   - The included setup script (`01_setup_gateway.sh`) **automatically detects** your second adapter, configures `192.0.2.1` / `192.0.2.2`, and persists the configuration via Netplan so it survives reboots!
+### VirtualBox:
+1. **Adapter 1**: Attached to **NAT**.
+2. **Adapter 2**: Attached to **Internal Network** (name: `transit`).
+3. Ensure **Cable Connected** is checked on both VMs.
+
+> **Auto-Detection:** The setup script (`01_setup_gateway.sh`) automatically detects secondary interfaces across hypervisors (`ens34`/`ens38` on VMware, `enp0s8` on VirtualBox), configures transit IPs, applies persistent Netplan configs, and manages AppArmor permissions.
 
 ---
 

@@ -22,7 +22,9 @@ runsh "$XP"
 runsh "$(ike_logs_cmd 3)"
 cap_stop
 
-runsh "tcpdump -nn -# -v -r $P"
+if [[ -s "$P" ]]; then
+  runsh "tcpdump -nn -# -v -r $P"
+fi
 if command -v tshark >/dev/null 2>&1; then
   runsh "tshark -r $P -Y isakmp -T fields -E header=y -e frame.number -e frame.time_relative -e ip.src -e ip.dst -e isakmp.exchtype -e isakmp.messageid -e isakmp.flags"
   runsh "tshark -r $P -Y esp -T fields -E header=y -e frame.number -e ip.src -e ip.dst -e esp.spi -e esp.sequence"

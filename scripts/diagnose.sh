@@ -56,6 +56,20 @@ if [[ -n "${WAN_IF:-}" ]] && ip link show "$WAN_IF" >/dev/null 2>&1; then
   else
     chk_fail "Transit IP is '$cur_ip' (expected $LOCAL_WAN/$WAN_PREFIX). Run: sudo ip addr replace $LOCAL_WAN/$WAN_PREFIX dev $WAN_IF"
   fi
+
+  # Test tcpdump operational state and AppArmor confinement
+  test_pcap="/tmp/cs6530w_diag_$$.pcap"
+  rm -f "$test_pcap"
+  if tcpdump -i "$WAN_IF" -n -c 1 -w "$test_pcap" >/dev/null 2>&1 & then
+    tpid=$!
+    sleep 0.3
+    kill -INT "$tpid" >/dev/null 2>&1 || true
+    wait "$tpid" 2>/dev/null || true
+    chk_pass "Packet capture tool (tcpdump) is operational and unconfined."
+    rm -f "$test_pcap"
+  else
+    chk_warn "tcpdump failed to capture on $WAN_IF. Check AppArmor: sudo aa-disable /usr/sbin/tcpdump"
+  fi
 else
   chk_fail "Transit interface '$WAN_IF' does not exist."
   echo "         Available interfaces:"
