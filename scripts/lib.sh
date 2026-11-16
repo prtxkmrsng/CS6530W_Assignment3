@@ -100,7 +100,15 @@ cap_start(){
     say "WARNING: cap_start called with empty interface; capture disabled for $f"
     return 1
   fi
-  tcpdump -i "$i" -n -s 0 -U -Z root -w "$f" "$@" >/dev/null 2>&1 &
+  local dir_opt=()
+  if [[ "${1:-}" == "-Q" ]]; then
+    dir_opt=("-Q" "$2")
+    shift 2
+  elif [[ "${1:-}" == --direction=* ]]; then
+    dir_opt=("$1")
+    shift 1
+  fi
+  tcpdump -i "$i" "${dir_opt[@]}" -n -s 0 -U -Z root -w "$f" "$@" >/dev/null 2>&1 &
   CAP_PIDS+=($!)
   sleep 1
 }
@@ -160,16 +168,30 @@ bring_up(){
 }
 
 verify_protected(){
-  local tag="$1" pc="$EV/$1.pcap" prc esp nat icmp ph ik=0 ch=0
+  local tag="$1" pc="$EV/$1.pcap" prc esp nat icmp ph ik=0 ch=0 leak=0
   ike_up || bring_up
-  cap_start "$pc" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+  # Capture outbound traffic on WAN to distinguish true ESP encryption from plaintext leakage
+  cap_start "$pc" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
   runsh "$(flow_cmd 5)"; prc=$RC
   cap_stop
-  esp=$(pk "$pc" esp); nat=$(pk "$pc" udp port 4500); icmp=$(pk "$pc" icmp); ph=$(payload_hits "$pc")
-  ike_up && ik=1; child_up && ch=1
-  runsh "ipsec statusall"; runsh "$XS"; runsh "$XP"
+
+  esp=$(pk "$pc" esp)
+  nat=$(pk "$pc" udp port 4500)
+  
+  # Outbound unencrypted ICMP packets from hostA to hostB on the WAN link
+  leak=$(tcpdump -nn -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+  icmp=$leak
+  ph=$(tcpdump -nn -A -r "$pc" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
+
+  ike_up && ik=1
+  child_up && ch=1
+
+  runsh "ipsec statusall"
+  runsh "$XS"
+  runsh "$XP"
+
   say "verify[$tag]: ping_rc=$prc native_esp=$esp udp4500=$nat plaintext_icmp_on_wan=$icmp payload_hits_on_wan=$ph ike_established=$ik child_installed=$ch"
-  if (( prc==0 && esp+nat>0 && icmp==0 && ph==0 && ik && ch )); then
+  if (( prc==0 && (esp+nat)>0 && icmp==0 && ph==0 && ik && ch )); then
     result PASS "tunnel healthy and protected ($tag)"
     return 0
   fi

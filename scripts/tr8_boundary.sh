@@ -13,13 +13,13 @@ if [[ "$ROLE" == A ]]; then
   say "Starting TR-8 on Gateway A: ensuring tunnel is healthy..."
   ike_up && child_up || bring_up
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
   runsh "$(flow_cmd 5)"; prc=$RC
   cap_stop
 else
   D="${1:-40}"
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
   say "Capturing ${D}s on GW-B; please run TR-8 on GW-A now..."
   sleep "$D"
   cap_stop
@@ -39,8 +39,9 @@ lan_icmp=$(pk "$LANP" icmp)
 lan_ph=$(payload_hits "$LANP")
 wan_esp=$(pk "$WANP" esp)
 wan_nat=$(pk "$WANP" udp port 4500)
-wan_icmp=$(pk "$WANP" icmp)
-wan_ph=$(payload_hits "$WANP")
+wan_leak=$(tcpdump -nn -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | wc -l)
+wan_icmp=$wan_leak
+wan_ph=$(tcpdump -nn -A -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 
 if [[ "$ROLE" == A ]]; then
   if (( prc == 0 && lan_icmp > 0 && lan_ph > 0 && (wan_esp + wan_nat) > 0 && wan_icmp == 0 && wan_ph == 0 )); then

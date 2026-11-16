@@ -50,7 +50,7 @@ runsh "grep -E 'ike=|esp=|leftsubnet|rightsubnet' /etc/ipsec.conf"
 ipsec_restart
 
 P="$EV/${f}_fault.pcap"
-cap_start "$P" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+cap_start "$P" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
 runsh "timeout 60 ipsec up $CONN" || true
 sleep 3
 
@@ -69,8 +69,9 @@ child_up && ch=1
 
 esp=$(pk "$P" esp)
 nat=$(pk "$P" udp port 4500)
-icmp=$(pk "$P" icmp)
-ph=$(payload_hits "$P")
+leak=$(tcpdump -nn -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+icmp=$leak
+ph=$(tcpdump -nn -A -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 
 say "SUMMARY[$TR]: IKE_SA_established=$ik CHILD_SA_installed=$ch ping_rc=$prc native_esp=$esp udp4500=$nat plaintext_icmp_on_wan=$icmp payload_hits_on_wan=$ph"
 say "connectivity=$([[ $prc -eq 0 ]] && echo reachable || echo unreachable)  protection=$([[ $((esp+nat)) -gt 0 && $icmp -eq 0 ]] && echo ESP-protected || echo NOT-protected)"
