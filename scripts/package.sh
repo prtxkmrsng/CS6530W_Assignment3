@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
-# Build <ROLLNO>_CS6530W_Assignment3.zip (no root needed). Excludes config.env/.role.
+# Build <ROLLNO>_CS6530W_Assignment3.zip. Excludes config.env/.role/.wan_if.
+set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
-source ./config.env; R="${ROLLNO^^}"; O="../${R}_CS6530W_Assignment3.zip"
-command -v zip >/dev/null || { echo "install zip"; exit 1; }
-zip -r "$O" . -x 'config.env' '.role' '.git/*' '*.zip' >/dev/null && echo "wrote $O"
+
+CONFIG_FILE="./config.env"
+[[ -f "$CONFIG_FILE" ]] || { echo "ERROR: missing config.env"; exit 1; }
+
+eval "$(tr -d '\r' < "$CONFIG_FILE")"
+ROLLNO="${ROLLNO:-CS24M001}"
+ROLLNO="${ROLLNO#"${ROLLNO%%[![:space:]]*}"}"
+ROLLNO="${ROLLNO%"${ROLLNO##*[![:space:]]}"}"
+R="${ROLLNO^^}"
+O="../${R}_CS6530W_Assignment3.zip"
+
+if ! command -v zip >/dev/null 2>&1; then
+  echo "Package 'zip' not found. Attempting installation..."
+  sudo apt-get install -y zip >/dev/null 2>&1 || { echo "ERROR: please run 'sudo apt install zip'"; exit 1; }
+fi
+
+zip -r "$O" . -x 'config.env' '.role' '.wan_if' '.git/*' '*.zip' >/dev/null && echo "Successfully created submission archive: $O"

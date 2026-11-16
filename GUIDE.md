@@ -1,9 +1,6 @@
-# GUIDE — Step-by-Step Runbook
+# GUIDE — Step-by-Step Runbook for VMware Workstation Pro
 
-Read this top to bottom the first time. Each test (TR) section follows the same pattern:
-**Goal → Run → What the script does → What to look for → Screenshots → What to write.**
-
-Contents: [0 Concepts](#0-concepts-in-plain-language) · [1 Build the lab](#1-build-the-lab) · [2 Install & configure](#2-install--configure-both-gateways) · [3 Tests TR-1…TR-8](#3-the-tests) · [4 Report](#4-writing-the-report) · [5 Package](#5-packaging-the-submission) · [6 Troubleshooting](#6-troubleshooting) · [7 Manual command cheat-sheet](#7-manual-command-cheat-sheet) · [8 Glossary](#8-glossary)
+Contents: [0 Concepts](#0-concepts-in-plain-language) · [1 VMware Workstation Lab Setup](#1-vmware-workstation-lab-setup) · [2 Install & Configure](#2-install--configure-both-gateways) · [3 Tests TR-1…TR-8](#3-the-tests) · [4 Diagnostics & Troubleshooting](#4-diagnostics--troubleshooting) · [5 Packaging Submission](#5-packaging-submission)
 
 ---
 
@@ -11,269 +8,154 @@ Contents: [0 Concepts](#0-concepts-in-plain-language) · [1 Build the lab](#1-bu
 
 Think of two offices connected by a public road.
 
-1. **IKE** is the two office managers meeting to agree on a secret handshake and a lockbox type.
-   - *IKE_SA_INIT*: "Here are the lockbox types I support" + key-exchange numbers.
-   - *IKE_AUTH*: "Prove you are who you say (PSK), and let's agree what traffic goes in the lockbox."
-2. The result is an **IKE_SA** (the managers' private line) and a **CHILD_SA** (the lockbox convoy). The CHILD_SA is really **two one-way ESP tunnels**, each with its own **SPI**.
-3. The Linux kernel keeps two tables:
+1. **IKE (Internet Key Exchange v2)** is the two office managers meeting to agree on a secret handshake and a lockbox type.
+   - *IKE_SA_INIT*: "Here are the lockbox types I support" + Diffie-Hellman key-exchange numbers.
+   - *IKE_AUTH*: "Prove who you are using the Pre-Shared Key (PSK), and let's agree what subnet traffic gets encrypted."
+2. The result is an **IKE_SA** (the managers' control channel) and a **CHILD_SA** (the data channel: two one-way ESP tunnels, each with its own **SPI**).
+3. The Linux kernel maintains two tables:
    - **Policy (SPD)** — *which* packets get protected (`10.1.0.0/24 ↔ 10.2.0.0/24`).
-   - **State (SAD)** — *how* (peer addresses, SPI, tunnel mode, algorithms).
-4. A packet's journey: hostA → Gateway A (policy matches) → state encrypts it into ESP → crosses transit as `192.0.2.1 → 192.0.2.2 ESP` → Gateway B decrypts → hostB.
-
-**What "evidence" means here:** you must connect the dots
-`hostA packet → traffic selector/policy → ESP state → SPI → capture on the transit interface`.
+   - **State (SAD)** — *how* they are protected (peer addresses, SPI, tunnel mode, algorithms).
+4. Packet journey: `hostA` → Gateway A (policy matches) → XFRM state encrypts into ESP → crosses transit link as `192.0.2.1 → 192.0.2.2 ESP` → Gateway B decrypts → `hostB`.
 
 ---
 
-## 1. Build the lab
+## 1. VMware Workstation Lab Setup
 
-### 1.1 Two VMs, one transit network
+### 1.1 Virtual Machine Network Configuration
 
-| | VM 1 (Site A) | VM 2 (Site B) |
-|---|---|---|
-| NIC 1 | NAT (internet for `apt`) | NAT |
-| NIC 2 | Internal network `transit` | Internal network `transit` |
-| Transit IP | `192.0.2.1/24` | `192.0.2.2/24` |
+Each Ubuntu Server VM requires two virtual network adapters:
 
-- VirtualBox: *Settings → Network → Adapter 2 → Internal Network → name `transit`* (same name on both).
-- VMware: use a custom/host-only VMnet shared by both. KVM/libvirt: an isolated network.
-- Find the NIC 2 name with `ip -br addr` (for example `enp0s8`).
+| Adapter | Type | Network Name | Purpose |
+|---|---|---|---|
+| **Adapter 1** | NAT | VMnet8 (Default NAT) | Internet connectivity for `apt` package downloads |
+| **Adapter 2** | LAN Segment | `transit` | Isolated Layer-2 link between VM 1 and VM 2 |
 
-### 1.2 Give each VM its transit IP (choose one)
+#### Steps in VMware Workstation Pro:
+1. Select **VM 1 (Site A)** in VMware Workstation.
+2. Click **Edit virtual machine settings** (or `VM -> Settings`).
+3. Ensure **Network Adapter** is set to **NAT**.
+4. Click **Add...** → select **Network Adapter** → click **Finish**.
+5. Select the newly added **Network Adapter 2**:
+   - Select **LAN Segment**.
+   - Click the **LAN Segments...** button, click **Add**, type `transit`, and click **OK**.
+   - In the dropdown, choose `transit`.
+   - Ensure **Connected** and **Connect at power on** checkboxes are BOTH checked.
+6. Repeat the exact same step for **VM 2 (Site B)**, selecting the same `transit` LAN segment.
+7. Power on both VMs.
 
-**Option A — let the setup script do it (non-persistent).** In `config.env` set `WAN_IF_ASSIGN=enp0s8`.
-
-**Option B — netplan (persistent).** `/etc/netplan/60-transit.yaml` (use `192.0.2.2/24` on VM 2):
-```yaml
-network:
-  version: 2
-  ethernets:
-    enp0s8:
-      addresses: [192.0.2.1/24]
-```
-then `sudo netplan apply`.
-
-### 1.3 Check the transit link
-```bash
-ping -c2 192.0.2.2      # from VM 1 (use 192.0.2.1 from VM 2)
-```
-It must work before you continue. The "UDP/500 only" or firewall issues later are much harder to spot if this is broken.
-
-> The addresses are examples; you may use others. Change them in `config.env` (identically on both VMs).
+> **Note on Interface Names:** In Ubuntu Server running under VMware, your primary adapter is usually `ens33`, and the second adapter is `ens34` (or `ens38`, `ens35`, `ens160`). The setup script will auto-detect your secondary adapter!
 
 ---
 
-## 2. Install & configure both gateways
+## 2. Install & Configure Both Gateways
 
-### 2.1 Copy the project and set your identity
-Copy the project folder to both VMs (put it under `$HOME`), then on each:
+### 2.1 Copy repository and configure identity
+On **BOTH** VMs, place the project under `$HOME` (e.g., `~/CS6530W_Assignment3`):
 ```bash
-cd cs6530w-a3
 cp config.env.example config.env
-nano config.env          # set ROLLNO="CS24M001" → your official roll number, UPPERCASE
+nano config.env          # Set ROLLNO="CS24M001" (replace with your UPPERCASE roll number)
 chmod +x scripts/*.sh
 ```
-`config.env` must be **identical on both VMs**. The PSK is derived automatically as `<ROLLNO>CS6530W-IPsec-A3-2026`; no one types it by hand, which avoids mismatches.
+> `config.env` must have the **exact same ROLLNO** on both VMs.
 
-### 2.2 Run the setup script
+### 2.2 Run setup script
+On **VM 1 (Site A)**:
 ```bash
-sudo scripts/01_setup_gateway.sh A      # VM 1
-sudo scripts/01_setup_gateway.sh B      # VM 2
+sudo scripts/01_setup_gateway.sh A
 ```
 
-| Step done by the script | Why |
-|---|---|
-| Install `strongswan-starter`, `tcpdump`, `iproute2` (+ `tshark` if available) | Classic `ipsec.conf` interface |
-| Disable the `strongswan` (swanctl) service, enable `strongswan-starter` | Two IKE daemons must not run together |
-| Create namespace `hostA`/`hostB` + veth pair, assign addresses, default route via gateway | The protected host, isolated from the gateway |
-| Enable IP forwarding, disable ICMP redirects, `rp_filter=2` | Gateways must route between LAN and WAN |
-| Add a **plaintext route** to the peer's protected subnet | Lets TR-1 work without IPsec (and lets faults still "ping") |
-| Allow UDP 500/4500, ESP, and forwarding in iptables | So a host firewall does not interfere |
-| Render `/etc/ipsec.conf` + `/etc/ipsec.secrets` (`auto=add`), restart strongSwan | Load the connection without starting it |
-
-### 2.3 Verify the plumbing (no IPsec yet)
-On VM 1:
+On **VM 2 (Site B)**:
 ```bash
-sudo ip netns exec hostA ping -c2 10.1.0.1      # host → its gateway
-sudo ipsec statusall | head                       # strongSwan running, conn loaded
-ip -br addr                                       # identify the WAN interface (screenshot)
+sudo scripts/01_setup_gateway.sh B
 ```
-Same on VM 2 with `hostB` and `10.2.0.1`.
 
-> **`auto=add`** means the connection is *loaded but not started*. Nothing negotiates until **you** run `ipsec up`, which is exactly what TR-2 needs.
+The script automatically:
+1. Waits for and clears any background `apt` locks.
+2. Installs `strongswan`, `strongswan-starter`, `tcpdump`, `iptables`, `zip`, `net-tools`, and crypto plugins.
+3. Auto-detects the secondary network adapter (`ens34` / `ens38`).
+4. Configures `192.0.2.1/24` (VM 1) or `192.0.2.2/24` (VM 2) and persists it in `/etc/netplan/` so it survives reboots.
+5. Creates the protected host network namespace (`hostA` / `hostB`) and veth pair.
+6. Sets kernel forwarding (`ip_forward=1`), disables `rp_filter`, and creates routing rules.
+7. Configures iptables / UFW to allow IPsec (UDP 500, UDP 4500, ESP, ICMP).
+8. Renders strongSwan configurations and verifies readiness.
+
+### 2.3 Run Diagnostic Health Check
+On either VM, run:
+```bash
+sudo scripts/diagnose.sh
+```
+This tests VMware interface status, carrier detection, inter-VM transit ping, namespaces, and strongSwan readiness.
 
 ---
 
-## 3. The tests
+## 3. The Tests
 
-Run in order. Scripts write to `evidence/<TR-x>/`. Take screenshots **with the terminal title/prompt visible** so the gateway (A or B) and command are clear.
+You can run each test directly or use the interactive lab runner: `sudo scripts/run_all.sh`.
 
-### TR-1 — Plaintext baseline (VM 1)
-
-- **Goal:** show that, with IPsec inactive, hostA → hostB works and the transit link carries **readable** ICMP: inner addresses and your roll-number payload.
+### TR-1 — Plaintext Baseline (Run on VM 1)
+- **Goal:** Verify that without IPsec, traffic between `hostA` and `hostB` is routed in plaintext across transit, with your roll number visible in the packet payload.
 - **Run:** `sudo scripts/tr1_plaintext.sh`
-- **What it does:** brings the tunnel down, logs `ip -br addr`, `ip route`, forwarding, empty XFRM tables, starts `tcpdump` on the WAN interface (`icmp`), sends a ping from `hostA` whose payload is your roll number, stops the capture, and counts packets and payload hits.
-- **Look for:** `10.1.0.10 > 10.2.0.10 ICMP`; payload text visible with `tcpdump -nn -A -r …`; `xfrm_states=0`; `RESULT [PASS]`.
-- **Screenshots:** `ip -br addr`, routes + `ip_forward=1`, the `tcpdump -r` listing, the payload line.
-- **Write:** expected (plaintext on transit) vs observed; interpretation: "routed connectivity without protection."
+- **Output:** `evidence/TR-1/tr1_plaintext.pcap` and `TR-1_gwA.log`
+- **Pass condition:** Ping succeeds, ICMP is visible on transit, roll number string matches, zero XFRM states.
 
-### TR-2 — Fresh IKEv2 establishment (VM 1; VM 2 just needs to be up)
-
-- **Goal:** capture a *brand-new* IKE negotiation and explain each exchange.
+### TR-2 — Fresh IKEv2 Establishment Capture (Run on VM 1)
+- **Goal:** Capture the initial IKEv2 handshake (`IKE_SA_INIT`, `IKE_AUTH`) and the subsequent CHILD_SA installation.
 - **Run:** `sudo scripts/tr2_ike_capture.sh`
-- **What it does:** takes the tunnel down, **starts the capture first**, then runs `ipsec up cs6530-site-to-site` from Gateway A, sends traffic, saves status/XFRM/charon log, stops the capture, and prints numbered packet listings (`tcpdump -# -v`, plus `tshark` fields if installed).
-- **Look for (Wireshark filter `isakmp || esp`):**
+- **Output:** `evidence/TR-2/tr2_ike_establish.pcap` and `TR-2_gwA.log`
+- **Pass condition:** IKE_SA ESTABLISHED, CHILD_SA INSTALLED, ISAKMP packets captured on UDP 500.
 
-| # (your numbers) | Exchange | What it carries |
-|---|---|---|
-| first request/response | `IKE_SA_INIT` | proposal (`aes256-sha256-modp2048`), DH public values, nonces |
-| next request/response | `IKE_AUTH` | encrypted: identities, PSK authentication, traffic selectors, first CHILD_SA |
-| later | ESP | data traffic after the CHILD_SA is installed |
-
-- **Also note:** the first CHILD_SA outcome (`INSTALLED, TUNNEL`) and whether ESP is native (IP proto 50) or UDP 4500.
-- **Write:** a table of packet number → exchange → purpose.
-
-### TR-3 — Protected session and SPI correlation (VM 1)
-
-- **Goal:** repeat the TR-1 flow under IPsec and prove ESP protects it.
+### TR-3 — Protected Session & SPI Correlation (Run on VM 1)
+- **Goal:** Transmit host traffic under IPsec and correlate the captured ESP SPIs with Linux XFRM Security Associations (SAD).
 - **Run:** `sudo scripts/tr3_protected.sh`
-- **What it does:** ensures the tunnel is up, captures `esp or udp port 4500 or udp port 500`, sends the same roll-number ping, saves `ipsec statusall`, redacted `ip xfrm state`, `ip xfrm policy`, then **automatically matches every captured SPI to its XFRM state**.
-- **Look for:**
-  - `ipsec statusall`: `ESTABLISHED` and `INSTALLED, TUNNEL`, plus the two ESP SPIs.
-  - PCAP: `192.0.2.1 > 192.0.2.2: ESP(spi=0x…)` and the reverse direction with a **different** SPI.
-  - The log's `SPI correlation` section: the XFRM state block with the same SPI, `src/dst`, `mode tunnel`, `reqid`, algorithms.
-  - `payload_hits_on_transit=0`.
-- **Why the payload is invisible:** ESP encrypts the entire original IP packet (inner addresses, ICMP header, payload) and wraps it in a new outer header between the gateways.
-- **Write:** SPI table (direction, outer src→dst, SPI, state match, mode, algorithm, reqid); never paste key bytes.
+- **Output:** `evidence/TR-3/tr3_protected.pcap` and `TR-3_gwA.log`
+- **Pass condition:** Encapsulation is ESP/UDP4500, 0 payload hits on transit, SPIs match active XFRM state entries.
 
-### TR-4 … TR-7 — Deliberate faults (VM 1 + VM 2)
+### TR-4 … TR-7 — Fault Injections (VM 1 + VM 2)
+For each fault test:
+1. On **VM 1**: `sudo scripts/fault.sh <fault_name>`
+2. When prompted, on **VM 2**: `sudo scripts/collect_peer.sh <TR-x>`
+3. Back on **VM 1**: Press **Enter** to restore and verify healthy state.
 
-Same workflow each time:
+| Test | Command on VM 1 | Fault Injected | Expected Observation |
+|---|---|---|---|
+| **TR-4** | `sudo scripts/fault.sh ike` | IKE proposal: `aes128-sha256-modp2048!` | IKE_SA_INIT rejected (`NO_PROPOSAL_CHOSEN`) |
+| **TR-5** | `sudo scripts/fault.sh psk` | PSK suffix: `-FAULT` | IKE_AUTH failed (`AUTHENTICATION_FAILED`) |
+| **TR-6** | `sudo scripts/fault.sh esp` | ESP proposal: `aes128-sha1!` | IKE_SA up, CHILD_SA rejected (`NO_PROPOSAL_CHOSEN`) |
+| **TR-7** | `sudo scripts/fault.sh ts` | Remote subnet: `10.3.0.0/24` | CHILD_SA rejected (`TS_UNACCEPTABLE`) |
 
-1. **VM 1:** `sudo scripts/fault.sh <ike|psk|esp|ts>`
-2. When it prints `Now run on Gateway B`, **VM 2:** `sudo scripts/collect_peer.sh TR-x` (peer's view: status, XFRM, charon log).
-3. Back on VM 1 press **Enter** → the script restores the healthy config and verifies it.
-
-`fault.sh` internally: **(1)** healthy baseline + verification → **(2)** fault, capture, `statusall`, XFRM, ping, logs, summary → **(3)** restore + verify. The summary line looks like:
-```
-SUMMARY[TR-x]: IKE_SA_established=0|1 CHILD_SA_installed=0|1 ping_rc=… native_esp=… plaintext_icmp_on_wan=…
-connectivity=reachable|unreachable  protection=ESP-protected|NOT-protected
-```
-
-| TR | Command | Change on A only | Expected lead (verify!) | Charon log keywords to look for |
-|---|---|---|---|---|
-| TR-4 | `fault.sh ike` | IKE `aes128-…` vs B `aes256-…` | IKE_SA_INIT rejected | `NO_PROPOSAL_CHOSEN`, "no IKE proposal" |
-| TR-5 | `fault.sh psk` | PSK `…-FAULT` | IKE_AUTH fails | `AUTHENTICATION_FAILED`, "tried 1 shared key" |
-| TR-6 | `fault.sh esp` | ESP `aes128-sha1!` vs B `aes256-sha256!` | IKE_SA up, CHILD_SA refused | `NO_PROPOSAL_CHOSEN` in IKE_AUTH/CHILD |
-| TR-7 | `fault.sh ts` | `rightsubnet=10.3.0.0/24` | selectors don't match B | `TS_UNACCEPTABLE`, "traffic selectors … inacceptable" |
-
-**Interpreting results**
-
-- Compare **IKE_SA** and **CHILD_SA** outcomes separately (TR-6 is the one where they differ).
-- **Connectivity vs protection:** with a plain route in place, `hostA → hostB` may still answer — as **plaintext ICMP** visible on the WAN. That is *reachable but not protected*.
-- **TR-7:** compare four things — configured selectors (A vs B conf), negotiated selectors (log/`statusall`), installed `ip xfrm policy`, and actual traffic. Then say whether the outcome was rejection, narrowing, or a non-matching policy — based on what you see, not on assumption.
-- Each fault needs the six-part record:
-  **Symptom → Evidence → Failure layer → Root cause → Correction → Verification.**
-
-### TR-8 — Security boundary (VM 2 first, then VM 1)
-
-- **Goal:** show the same flow in three places: before encapsulation, across transit, after decapsulation.
+### TR-8 — Security Boundary Verification
+- **Goal:** Prove security boundary isolation: plaintext on the LAN side (`veth*-gw`) vs ciphertext on the transit interface (`WAN_IF`).
 - **Run:**
-  - VM 2: `sudo scripts/tr8_boundary.sh 40` (captures both Gateway B interfaces for 40 s)
-  - VM 1 (within those 40 s): `sudo scripts/tr8_boundary.sh`
-- **Captured:** Gateway A `vethA-gw` (protected side) + WAN; Gateway B `vethB-gw` + WAN.
-- **Expect:** inner `10.1.0.10 → 10.2.0.10` + payload visible on both protected-side captures; only ESP between `192.0.2.1` and `192.0.2.2` on transit.
-- **Write:** a table: capture point → addresses → protocol → payload visible (yes/no). Explain that plaintext on a protected-side interface is *inside* the site's trust boundary and is not WAN exposure.
-
-### After every fault: confirm the known-good state
-```bash
-sudo scripts/verify.sh       # on each gateway
-```
-`PASS` means: IKE_SA ESTABLISHED, CHILD_SA INSTALLED, ping OK, ESP on the wire, no plaintext on transit.
+  1. On **VM 2** FIRST: `sudo scripts/tr8_boundary.sh 40` (starts 40s capture)
+  2. On **VM 1** (within 40s): `sudo scripts/tr8_boundary.sh`
+- **Pass condition:** LAN side shows plaintext ICMP + roll number payload; WAN transit link shows strictly ESP with 0 plaintext ICMP and 0 payload hits.
 
 ---
 
-## 4. Writing the report
+## 4. Diagnostics & Troubleshooting
 
-Use `report/REPORT_TEMPLATE.md`. For **each** TR include:
-
-1. Objective · 2. Procedure with exact commands · 3. Input/configuration change · 4. Expected · 5. Observed · 6. Pass/Fail · 7. Evidence identifiers (file, packet #, screenshot #) · 8. A concise 2–3 sentence interpretation.
-
-Also: gateway-specific outputs, screenshots showing command + gateway, PCAP packet numbers, and the **AI-use disclosure** required by course policy. Export as `<RollNo>_CS6530W_Assignment3.pdf`.
-
-Good evidence habits: one scenario per screenshot, readable font, never include key bytes (they're already redacted by the scripts), cite *packet numbers* rather than "see capture".
-
----
-
-## 5. Packaging the submission
-
-1. Copy VM 2's `evidence/` files into VM 1's project tree (e.g., `scp -r vm2:~/cs6530w-a3/evidence/. evidence/`).
-2. Put screenshots in `evidence/screenshots/`.
-3. Check for leaked keys (must print nothing): `grep -rE '0x[0-9a-f]{20,}' evidence siteA siteB`
-4. `scripts/package.sh` → `../<ROLLNO>_CS6530W_Assignment3.zip` (excludes `config.env`, `.role`).
-5. Upload the PDF + ZIP. **Deadline: Sat 21 Nov 2026, 11:59 PM IST** (22 Nov: −20 marks, 23 Nov: −40 marks).
-
----
-
-## 6. Troubleshooting
-
-| Symptom | Likely cause → fix |
+| Symptom | Cause & Solution |
 |---|---|
-| `ipsec: command not found` | `sudo apt install strongswan-starter` |
-| Both `strongswan` and `strongswan-starter` active | `sudo systemctl disable --now strongswan; sudo systemctl restart strongswan-starter` |
-| Setup says WAN IP not on any interface | Assign it (netplan) or set `WAN_IF_ASSIGN` in `config.env` |
-| `ping 192.0.2.2` fails between VMs | Both NICs not on the same internal network; wrong IP/prefix |
-| Tunnel up but hostA↔hostB ping fails | `sysctl net.ipv4.ip_forward` (=1?), `sudo iptables -S FORWARD`, host default route, `ip route get 10.2.0.10` on gateway |
-| Ping works, no ESP seen | Tunnel isn't up (plaintext route used). Run `sudo scripts/verify.sh`, then `ipsec statusall` |
-| `AUTHENTICATION_FAILED` on a healthy run | ROLLNO differs / not uppercase on the two VMs; fix `config.env`, run `scripts/restore.sh` on both |
-| tcpdump: "Permission denied" writing PCAP | Move project under `$HOME`; scripts already use `-Z root` |
-| Stale/odd SAs after experiments | `sudo scripts/restore.sh` |
-| `fault.sh` aborts "baseline not healthy" | Fix the healthy tunnel first (start with `restore.sh` on **both** gateways) |
-| Need to remove the lab | `sudo scripts/teardown.sh` (shows commands; type `REVIEWED` to proceed) |
-
-Where to look for logs: `sudo journalctl -t charon --since -10min --no-pager`, or `evidence/<TR>/*.log`.
+| `Transit link to peer is NOT reachable` | In VMware Workstation, ensure both VMs have Network Adapter 2 set to the **same** LAN Segment (or same Host-only VMnet). Check that the "Connected" checkbox is marked in VMware Settings. |
+| `baseline not healthy` in `fault.sh` | Run `sudo scripts/restore.sh` on **both** VM 1 and VM 2 to return to the known-good state. |
+| Ping fails between hostA and hostB | Run `sudo scripts/diagnose.sh` to check IP forwarding, interface status, and firewall rules. |
+| `ipsec: command not found` | Run `sudo scripts/01_setup_gateway.sh A` (or B) to install missing packages. |
 
 ---
 
-## 7. Manual command cheat-sheet
+## 5. Packaging Submission
 
-Everything the scripts do can be done by hand (useful for your "exact commands" section).
-
-```bash
-# Which interface is WAN / LAN
-ip -br addr
-# Plaintext capture (TR-1)
-sudo tcpdump -i <WAN-IF> -n -s 0 -w tr1_plaintext.pcap icmp
-sudo ip netns exec hostA ping -c5 10.2.0.10
-# Protected capture (TR-3)
-sudo tcpdump -i <WAN-IF> -n -s 0 -w tr3_protected.pcap "esp or udp port 4500 or udp port 500"
-# Controlled initiation (TR-2) — capture running first, then on Gateway A:
-sudo ipsec up cs6530-site-to-site
-sudo ipsec statusall
-sudo ip xfrm policy
-sudo ip xfrm state | sed -E 's/0x[0-9a-fA-F]{20,}/0x<REDACTED>/g'
-# Read a pcap
-tcpdump -nn -# -v -r tr2_ike_establish.pcap
-tcpdump -nn -A  -r tr1_plaintext.pcap | grep <ROLLNO>
-# Bring the tunnel down / reload config
-sudo ipsec down cs6530-site-to-site
-sudo systemctl restart strongswan-starter
-```
-
----
-
-## 8. Glossary
-
-| Term | Meaning |
-|---|---|
-| **ESP** | Encapsulating Security Payload: IPsec's encrypt + integrity-protect packet format (IP proto 50). |
-| **SPI** | Security Parameter Index; labels an SA so the receiver finds the right keys. One per direction. |
-| **SA** | Security Association — an agreed set of algorithms/keys for one direction or channel. |
-| **Tunnel mode** | The whole original IP packet is encrypted and given a new outer IP header (gateway→gateway). |
-| **PSK** | Pre-shared key authentication (lab-only secret here). |
-| **DH / modp2048** | Diffie-Hellman group used to derive keys without sending them. |
-| **NAT-T** | NAT traversal: ESP wrapped in UDP 4500; used only when NAT is detected. |
-| **reqid** | Kernel ID that ties a policy to its state(s). |
-| **SPD / SAD** | Security Policy Database (`ip xfrm policy`) / Security Association Database (`ip xfrm state`). |
-| **Traffic selector (TS)** | The subnet pair a CHILD_SA protects. |
-| **Namespace** | A Linux network stack of its own; used to emulate hostA and hostB. |
+1. Copy VM 2's evidence into VM 1:
+   ```bash
+   scp -r user@<vm2-ip>:~/CS6530W_Assignment3/evidence/* ~/CS6530W_Assignment3/evidence/
+   ```
+2. Place terminal screenshots into `evidence/screenshots/`.
+3. Verify no raw cryptographic keys are present:
+   ```bash
+   grep -rE '0x[0-9a-f]{20,}' evidence siteA siteB
+   ```
+4. Package the archive:
+   ```bash
+   scripts/package.sh
+   ```
+   Outputs: `../<ROLLNO>_CS6530W_Assignment3.zip`.

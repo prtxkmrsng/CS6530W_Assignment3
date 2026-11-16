@@ -1,6 +1,7 @@
 # local identity / role
 config.env
 .role
+.wan_if
 # secrets (real, non-example)
 ipsec.secrets
 *.psk
