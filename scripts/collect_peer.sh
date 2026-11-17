@@ -15,6 +15,7 @@ say "=========================================================="
 
 runsh "ip -br addr"
 runsh "grep -E 'ike=|esp=|leftsubnet|rightsubnet|left=|right=' /etc/ipsec.conf"
+runsh "awk -F'\"' '{print \"PSK_len=\", length(\$2)}' /etc/ipsec.secrets"
 runsh "ipsec statusall"
 runsh "$XS"
 runsh "$XP"

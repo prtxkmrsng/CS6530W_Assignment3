@@ -13,13 +13,13 @@ if [[ "$ROLE" == A ]]; then
   say "Starting TR-8 on Gateway A: ensuring tunnel is healthy..."
   ike_up && child_up || bring_up
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
   runsh "$(flow_cmd 5)"; prc=$RC
   cap_stop
 else
   D="${1:-40}"
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
   say "Capturing ${D}s on GW-B; please run TR-8 on GW-A now..."
   sleep "$D"
   cap_stop

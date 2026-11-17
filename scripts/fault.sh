@@ -27,6 +27,7 @@ say "=========================================================="
 say "##### PHASE 1: healthy baseline verification"
 "$ROOT/scripts/render_config.sh"
 ipsec_restart
+runsh "awk -F'\"' '{print \"PSK_len=\", length(\$2)}' /etc/ipsec.secrets"
 bring_up || true
 
 if ! verify_protected "${f}_pre_healthy"; then
@@ -47,10 +48,11 @@ eval "export $FAULT_VAR"
 unset "${FAULT_VAR%%=*}"
 
 runsh "grep -E 'ike=|esp=|leftsubnet|rightsubnet' /etc/ipsec.conf"
+runsh "awk -F'\"' '{print \"PSK_len=\", length(\$2)}' /etc/ipsec.secrets"
 ipsec_restart
 
 P="$EV/${f}_fault.pcap"
-cap_start "$P" "$WAN_IF" -Q out esp or udp port 4500 or udp port 500 or icmp
+cap_start "$P" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
 runsh "timeout 60 ipsec up $CONN" || true
 sleep 3
 
