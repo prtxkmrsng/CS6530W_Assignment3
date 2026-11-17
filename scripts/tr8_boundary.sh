@@ -13,13 +13,13 @@ if [[ "$ROLE" == A ]]; then
   say "Starting TR-8 on Gateway A: ensuring tunnel is healthy..."
   ike_up && child_up || bring_up
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" "esp or udp port 4500 or udp port 500 or (icmp and src $HOST_IP and dst $PEER_HOST)"
   runsh "$(flow_cmd 5)"; prc=$RC
   cap_stop
 else
   D="${1:-40}"
   cap_start "$LANP" "$VETH_GW" icmp
-  cap_start "$WANP" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+  cap_start "$WANP" "$WAN_IF" "esp or udp port 4500 or udp port 500 or (icmp and src $HOST_IP and dst $PEER_HOST)"
   say "Capturing ${D}s on GW-B; please run TR-8 on GW-A now..."
   sleep "$D"
   cap_stop
@@ -45,8 +45,8 @@ lan_ph=$(payload_hits "$LANP")
 wan_esp=$(pk "$WANP" esp)
 wan_nat=$(pk "$WANP" udp port 4500)
 if [[ -s "$WANP" && -r "$WANP" ]]; then
-  wan_leak=$(tcpdump -nn -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | wc -l)
-  wan_ph=$(tcpdump -nn -A -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
+  wan_leak=$(tcpdump -nn -r "$WANP" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+  wan_ph=$(tcpdump -nn -A -r "$WANP" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 else
   wan_leak=0
   wan_ph=0

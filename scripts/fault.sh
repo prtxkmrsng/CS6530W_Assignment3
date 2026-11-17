@@ -52,7 +52,7 @@ runsh "awk -F'\"' '{print \"PSK_len=\", length(\$2)}' /etc/ipsec.secrets"
 ipsec_restart
 
 P="$EV/${f}_fault.pcap"
-cap_start "$P" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
+cap_start "$P" "$WAN_IF" "esp or udp port 4500 or udp port 500 or (icmp and src $HOST_IP and dst $PEER_HOST)"
 runsh "timeout 60 ipsec up $CONN" || true
 sleep 3
 
