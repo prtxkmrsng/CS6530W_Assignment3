@@ -7,7 +7,7 @@ CONFIG_FILE="./config.env"
 [[ -f "$CONFIG_FILE" ]] || { echo "ERROR: missing config.env"; exit 1; }
 
 eval "$(tr -d '\r' < "$CONFIG_FILE")"
-ROLLNO="${ROLLNO:-CS24M001}"
+ROLLNO="${ROLLNO:-CS25M568}"
 ROLLNO="${ROLLNO#"${ROLLNO%%[![:space:]]*}"}"
 ROLLNO="${ROLLNO%"${ROLLNO##*[![:space:]]}"}"
 R="${ROLLNO^^}"

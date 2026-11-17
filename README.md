@@ -57,10 +57,12 @@ The goal: traffic **hostA ↔ hostB** must cross the transit link **only as encr
 ## 3. Quick Start (Step-by-Step)
 
 ```bash
-# 1) On BOTH VMs: clone/copy the repo to $HOME, then set your roll number:
-cp config.env.example config.env
-nano config.env                         # Change ROLLNO="CS24M001" to your UPPERCASE roll number
+# 1) On BOTH VMs: clone/copy the repo to $HOME, and make scripts executable:
 chmod +x scripts/*.sh
+
+# Note: The lab automatically defaults to roll number CS25M568.
+# If you want to change it, simply copy and edit config.env:
+#   cp config.env.example config.env && nano config.env
 
 # 2) One-time gateway setup:
 sudo scripts/01_setup_gateway.sh A      # On VM 1 (Gateway A)

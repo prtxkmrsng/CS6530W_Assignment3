@@ -55,14 +55,12 @@ Each Ubuntu Server VM requires two virtual network adapters:
 
 ## 2. Install & Configure Both Gateways
 
-### 2.1 Copy repository and configure identity
+### 2.1 Copy repository
 On **BOTH** VMs, place the project under `$HOME` (e.g., `~/CS6530W_Assignment3`):
 ```bash
-cp config.env.example config.env
-nano config.env          # Set ROLLNO="CS24M001" (replace with your UPPERCASE roll number)
 chmod +x scripts/*.sh
 ```
-> `config.env` must have the **exact same ROLLNO** on both VMs.
+> **Roll Number:** The lab defaults to roll number `CS25M568` automatically. If you want to change it, copy `cp config.env.example config.env` and edit `ROLLNO="<YOUR_ROLLNO>"`. Keep it identical on both VMs.
 
 ### 2.2 Run setup script
 On **VM 1 (Site A)**:
