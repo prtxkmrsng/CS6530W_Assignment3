@@ -18,4 +18,7 @@ if ! command -v zip >/dev/null 2>&1; then
   sudo apt-get install -y zip >/dev/null 2>&1 || { echo "ERROR: please run 'sudo apt install zip'"; exit 1; }
 fi
 
+# Ensure all evidence files are readable before archiving
+chmod -R a+rX evidence/ 2>/dev/null || true
+
 zip -r "$O" . -x 'config.env' '.role' '.wan_if' '.git/*' '*.zip' >/dev/null && echo "Successfully created submission archive: $O"

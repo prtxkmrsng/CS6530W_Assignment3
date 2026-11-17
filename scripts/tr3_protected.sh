@@ -14,7 +14,11 @@ cap_stop
 runsh "ipsec statusall"
 runsh "$XS"
 runsh "$XP"
-if [[ -s "$P" ]]; then
+if [[ -f "$P" ]]; then
+  chmod 666 "$P" 2>/dev/null || chmod 644 "$P" 2>/dev/null || true
+fi
+
+if [[ -s "$P" && -r "$P" ]]; then
   runsh "tcpdump -nn -# -r $P esp"
 fi
 
@@ -27,12 +31,18 @@ say "payload_hits_on_transit=$ph (expected 0: ESP encrypts inner packet)"
 say "=== SPI correlation ==="
 
 # Collect all SPIs from both captured packets and active XFRM states
-SPIS=$( (tcpdump -nn -r "$P" "esp or udp port 4500" 2>/dev/null | grep -oEi 'spi=0x[0-9a-f]+' | cut -d= -f2; ip xfrm state 2>/dev/null | grep -oEi 'spi 0x[0-9a-f]+' | awk '{print $2}') | tr '[:upper:]' '[:lower:]' | sort -u )
+if [[ -s "$P" && -r "$P" ]]; then
+  SPIS=$( (tcpdump -nn -r "$P" "esp or udp port 4500" 2>/dev/null | grep -oEi 'spi=0x[0-9a-f]+' | cut -d= -f2; ip xfrm state 2>/dev/null | grep -oEi 'spi 0x[0-9a-f]+' | awk '{print $2}') | tr '[:upper:]' '[:lower:]' | sort -u )
+else
+  SPIS=$(ip xfrm state 2>/dev/null | grep -oEi 'spi 0x[0-9a-f]+' | awk '{print $2}' | tr '[:upper:]' '[:lower:]' | sort -u)
+fi
 
 for spi in $SPIS; do
   [[ -n "$spi" ]] || continue
   say "--- SPI $spi"
-  tcpdump -nn -r "$P" 2>/dev/null | grep -i "spi=$spi" | head -n 2 | tee -a "$LOG" || true
+  if [[ -s "$P" && -r "$P" ]]; then
+    tcpdump -nn -r "$P" 2>/dev/null | grep -i "spi=$spi" | head -n 2 | tee -a "$LOG" || true
+  fi
   ip xfrm state 2>/dev/null | awk -v s="$spi" 'BEGIN{IGNORECASE=1} /^src /{if(tolower(b) ~ ("spi " s)) printf "%s",b; b=""} {b=b $0 "\n"} END{if(tolower(b) ~ ("spi " s)) printf "%s",b}' | "$ROOT/scripts/redact.sh" | tee -a "$LOG"
 done
 

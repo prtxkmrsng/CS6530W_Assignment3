@@ -29,7 +29,12 @@ fi
 for X in "$LANP:protected-side($VETH_GW)" "$WANP:transit($WAN_IF)"; do
   f="${X%%:*}"; n="${X#*:}"
   say "===== $n  $f"
-  runsh "tcpdump -nn -# -r $f"
+  if [[ -f "$f" ]]; then
+    chmod 666 "$f" 2>/dev/null || chmod 644 "$f" 2>/dev/null || true
+  fi
+  if [[ -s "$f" && -r "$f" ]]; then
+    runsh "tcpdump -nn -# -r $f"
+  fi
   say "icmp_pkts=$(pk "$f" icmp) esp_pkts=$(pk "$f" esp) udp4500=$(pk "$f" udp port 4500) payload_visible_hits=$(payload_hits "$f")"
 done
 
@@ -39,9 +44,14 @@ lan_icmp=$(pk "$LANP" icmp)
 lan_ph=$(payload_hits "$LANP")
 wan_esp=$(pk "$WANP" esp)
 wan_nat=$(pk "$WANP" udp port 4500)
-wan_leak=$(tcpdump -nn -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | wc -l)
+if [[ -s "$WANP" && -r "$WANP" ]]; then
+  wan_leak=$(tcpdump -nn -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | wc -l)
+  wan_ph=$(tcpdump -nn -A -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
+else
+  wan_leak=0
+  wan_ph=0
+fi
 wan_icmp=$wan_leak
-wan_ph=$(tcpdump -nn -A -r "$WANP" "icmp and (src $SITE_A_HOST or src $SITE_B_HOST)" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 
 if [[ "$ROLE" == A ]]; then
   if (( prc == 0 && lan_icmp > 0 && lan_ph > 0 && (wan_esp + wan_nat) > 0 && wan_icmp == 0 && wan_ph == 0 )); then

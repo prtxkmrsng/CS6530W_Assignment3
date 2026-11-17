@@ -88,6 +88,13 @@ scripts/package.sh                      # Generates ../<ROLLNO>_CS6530W_Assignme
 
 ## 4. Requirement ↔ Script ↔ Evidence Map
 
+> [!IMPORTANT]
+> **DO NOT DELETE PLACEHOLDER FILES IN `evidence/`**
+> The repository comes pre-populated with placeholder files (`.pcap`, `.log`, and config files) in the `evidence/` directory for each test requirement (`TR-1` through `TR-8` and `config_gw*`).
+> - **Purpose:** Pre-existing placeholder files ensure that directory trees and files exist with proper read/write permissions on the initial run, preventing permission denials and file-not-found errors when analysis tools (e.g., `tshark`, `tcpdump`) inspect capture files.
+> - **Automatic Overwrite:** When you execute any test script (`tr1_plaintext.sh`, `tr2_ike_capture.sh`, `fault.sh`, etc.), the script automatically overwrites and populates these files with live packet captures and command outputs.
+> - **Explicit Instruction:** **DO NOT delete or remove any placeholder files or subdirectories in `evidence/`.** Leave them in place so test scripts can write directly to them without permission barriers.
+
 | Test | Objective | Script | Output Evidence |
 |---|---|---|---|
 | **TR-1** | Plaintext baseline | `tr1_plaintext.sh` | `evidence/TR-1/tr1_plaintext.pcap`, `TR-1_gwA.log` |

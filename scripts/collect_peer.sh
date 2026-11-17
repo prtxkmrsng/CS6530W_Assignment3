@@ -26,7 +26,12 @@ if (( S > 0 )); then
   cap_start "$P" "$WAN_IF" esp or udp port 4500 or udp port 500 or icmp
   sleep "$S"
   cap_stop
-  runsh "tcpdump -nn -# -v -r $P"
+  if [[ -f "$P" ]]; then
+    chmod 666 "$P" 2>/dev/null || chmod 644 "$P" 2>/dev/null || true
+  fi
+  if [[ -s "$P" && -r "$P" ]]; then
+    runsh "tcpdump -nn -# -v -r $P"
+  fi
 fi
 
 say "Peer evidence collected in $EV/${TR_NAME}_gw${ROLE}.log"

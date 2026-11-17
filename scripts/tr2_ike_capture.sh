@@ -22,12 +22,17 @@ runsh "$XP"
 runsh "$(ike_logs_cmd 3)"
 cap_stop
 
-if [[ -s "$P" ]]; then
+# Ensure capture file is readable before analysis
+if [[ -f "$P" ]]; then
+  chmod 666 "$P" 2>/dev/null || chmod 644 "$P" 2>/dev/null || true
+fi
+
+if [[ -s "$P" && -r "$P" ]]; then
   runsh "tcpdump -nn -# -v -r $P"
 fi
-if command -v tshark >/dev/null 2>&1; then
-  runsh "tshark -r $P -Y isakmp -T fields -E header=y -e frame.number -e frame.time_relative -e ip.src -e ip.dst -e isakmp.exchtype -e isakmp.messageid -e isakmp.flags"
-  runsh "tshark -r $P -Y esp -T fields -E header=y -e frame.number -e ip.src -e ip.dst -e esp.spi -e esp.sequence"
+if command -v tshark >/dev/null 2>&1 && [[ -s "$P" && -r "$P" ]]; then
+  runsh "tshark -r $P -Y isakmp -T fields -E header=y -e frame.number -e frame.time_relative -e ip.src -e ip.dst -e isakmp.exchange_type -e isakmp.messageid -e isakmp.flags 2>/dev/null || tshark -r $P -Y isakmp 2>/dev/null || true"
+  runsh "tshark -r $P -Y esp -T fields -E header=y -e frame.number -e ip.src -e ip.dst -e esp.spi -e esp.sequence 2>/dev/null || tshark -r $P -Y esp 2>/dev/null || true"
 fi
 
 say "native_esp=$(pk "$P" esp) udp500=$(pk "$P" udp port 500) udp4500=$(pk "$P" udp port 4500)"

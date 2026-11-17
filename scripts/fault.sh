@@ -61,7 +61,11 @@ runsh "$(flow_cmd 5)"; prc=$RC
 runsh "$(ike_logs_cmd 3)"
 cap_stop
 
-if [[ -s "$P" ]]; then
+if [[ -f "$P" ]]; then
+  chmod 666 "$P" 2>/dev/null || chmod 644 "$P" 2>/dev/null || true
+fi
+
+if [[ -s "$P" && -r "$P" ]]; then
   runsh "tcpdump -nn -# -v -r $P"
 fi
 
@@ -71,9 +75,14 @@ child_up && ch=1
 
 esp=$(pk "$P" esp)
 nat=$(pk "$P" udp port 4500)
-leak=$(tcpdump -nn -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+if [[ -s "$P" && -r "$P" ]]; then
+  leak=$(tcpdump -nn -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | wc -l)
+  ph=$(tcpdump -nn -A -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
+else
+  leak=0
+  ph=0
+fi
 icmp=$leak
-ph=$(tcpdump -nn -A -r "$P" "icmp and src $HOST_IP and dst $PEER_HOST" 2>/dev/null | grep -c -- "$ROLL_GREP" || true)
 
 say "SUMMARY[$TR]: IKE_SA_established=$ik CHILD_SA_installed=$ch ping_rc=$prc native_esp=$esp udp4500=$nat plaintext_icmp_on_wan=$icmp payload_hits_on_wan=$ph"
 say "connectivity=$([[ $prc -eq 0 ]] && echo reachable || echo unreachable)  protection=$([[ $((esp+nat)) -gt 0 && $icmp -eq 0 ]] && echo ESP-protected || echo NOT-protected)"

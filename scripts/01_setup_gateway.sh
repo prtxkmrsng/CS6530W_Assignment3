@@ -76,6 +76,14 @@ elif command -v aa-complain >/dev/null 2>&1; then
   aa-complain /usr/sbin/tcpdump >/dev/null 2>&1 || true
 fi
 
+# Ensure evidence directory and placeholder files have open read/write permissions
+if [[ -d "$ROOT/evidence" ]]; then
+  chmod -R a+rwX "$ROOT/evidence" 2>/dev/null || true
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$ROOT/evidence" 2>/dev/null || true
+  fi
+fi
+
 # 2. Detect / Configure transit interface for VMware Workstation Pro
 echo "[2/7] Detecting transit network interface..."
 FOUND_WAN_IF=""

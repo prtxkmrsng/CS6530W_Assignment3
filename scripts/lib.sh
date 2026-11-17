@@ -92,15 +92,37 @@ cleanup(){
     src="${m%%:*}"
     dst="${m#*:}"
     if [[ -f "$src" && "$src" != "$dst" ]]; then
-      mv -f "$src" "$dst" 2>/dev/null || true
+      mv -f "$src" "$dst" 2>/dev/null || cp -f "$src" "$dst" 2>/dev/null || true
+      rm -f "$src" 2>/dev/null || true
+      chmod 666 "$dst" 2>/dev/null || chmod 644 "$dst" 2>/dev/null || true
+      if [[ -n "${SUDO_USER:-}" ]]; then
+        chown "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$dst" 2>/dev/null || true
+      fi
     fi
   done
+  if [[ -d "$ROOT/evidence" ]]; then
+    chmod -R a+rwX "$ROOT/evidence" 2>/dev/null || true
+    if [[ -n "${SUDO_USER:-}" ]]; then
+      chown -R "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$ROOT/evidence" 2>/dev/null || true
+    fi
+  fi
 }
 trap cleanup EXIT INT TERM
 XS="ip xfrm state | \"$ROOT/scripts/redact.sh\""
 XP="ip xfrm policy"
 
-ev_init(){ TR="$1"; EV="$ROOT/evidence/$TR"; mkdir -p "$EV"; LOG="$EV/${TR}_gw${ROLE}.log"; : >"$LOG"; }
+ev_init(){
+  TR="$1"
+  EV="$ROOT/evidence/$TR"
+  mkdir -p "$EV"
+  chmod 777 "$EV" 2>/dev/null || chmod 755 "$EV" 2>/dev/null || true
+  LOG="$EV/${TR}_gw${ROLE}.log"
+  [[ -f "$LOG" ]] || : >"$LOG"
+  chmod 666 "$LOG" 2>/dev/null || chmod 644 "$LOG" 2>/dev/null || true
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$EV" 2>/dev/null || true
+  fi
+}
 say(){ echo "$*" | tee -a "$LOG"; }
 result(){ echo "RESULT [$1] $2" | tee -a "$LOG"; }
 runsh(){
@@ -122,6 +144,16 @@ cap_start(){
     return 1
   fi
   mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  chmod 777 "$(dirname "$f")" 2>/dev/null || chmod 755 "$(dirname "$f")" 2>/dev/null || true
+
+  # Ensure destination placeholder exists and is accessible
+  if [[ ! -f "$f" ]]; then
+    : > "$f" 2>/dev/null || true
+  fi
+  chmod 666 "$f" 2>/dev/null || chmod 644 "$f" 2>/dev/null || true
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    chown "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$f" 2>/dev/null || true
+  fi
 
   # Always capture initially to /tmp to prevent AppArmor confinement or directory access failures
   local tmp_cap="/tmp/cs6530w_cap_${$}_${#CAP_PIDS[@]}.pcap"
@@ -171,6 +203,12 @@ cap_stop(){
     elif [[ ! -f "$dst" ]]; then
       : > "$dst"
     fi
+    if [[ -f "$dst" ]]; then
+      chmod 666 "$dst" 2>/dev/null || chmod 644 "$dst" 2>/dev/null || true
+      if [[ -n "${SUDO_USER:-}" ]]; then
+        chown "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$dst" 2>/dev/null || true
+      fi
+    fi
   done
 
   CAP_PIDS=()
@@ -179,14 +217,16 @@ cap_stop(){
 
 pk(){
   local f="$1"; shift
-  [[ -f "$f" && -s "$f" ]] || { echo 0; return; }
+  [[ -f "$f" && -r "$f" && -s "$f" ]] || { echo 0; return; }
+  chmod 666 "$f" 2>/dev/null || chmod 644 "$f" 2>/dev/null || true
   tcpdump -nn -r "$f" "$@" 2>/dev/null | wc -l
 }
 
 payload_hits(){
   local f="$1"
-  [[ -f "$f" && -s "$f" ]] || { echo 0; return; }
+  [[ -f "$f" && -r "$f" && -s "$f" ]] || { echo 0; return; }
   [[ -n "$ROLL_GREP" ]] || { echo 0; return; }
+  chmod 666 "$f" 2>/dev/null || chmod 644 "$f" 2>/dev/null || true
   tcpdump -nn -A -r "$f" 2>/dev/null | grep -c -- "$ROLL_GREP" || true
 }
 

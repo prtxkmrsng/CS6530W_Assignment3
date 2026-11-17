@@ -39,15 +39,22 @@ conn $CONN
     auto=add
 CONF
 
-umask 077
-printf '%s %s : PSK "%s"\n' "$LOCAL_WAN" "$PEER_WAN" "$PSK" >"$OUT_DIR/ipsec.secrets"
-chmod 600 "$OUT_DIR/ipsec.secrets"
+(
+  umask 077
+  printf '%s %s : PSK "%s"\n' "$LOCAL_WAN" "$PEER_WAN" "$PSK" >"$OUT_DIR/ipsec.secrets"
+  chmod 600 "$OUT_DIR/ipsec.secrets"
+)
 
 if [[ "$OUT_DIR" == /etc ]]; then
   D="$ROOT/evidence/config_gw$ROLE"
   mkdir -p "$D"
+  chmod 777 "$D" 2>/dev/null || chmod 755 "$D" 2>/dev/null || true
   cp /etc/ipsec.conf "$D/ipsec.conf"
   sed -E 's/(PSK ")[^"]*"/\1<LAB-PSK-REDACTED>"/' /etc/ipsec.secrets >"$D/ipsec.secrets.redacted"
+  chmod 666 "$D/ipsec.conf" "$D/ipsec.secrets.redacted" 2>/dev/null || chmod 644 "$D/ipsec.conf" "$D/ipsec.secrets.redacted" 2>/dev/null || true
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R "${SUDO_USER}:$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")" "$D" 2>/dev/null || true
+  fi
 fi
 
 echo "rendered GW-$ROLE: ike=$IKE esp=$ESP lsub=$LSUB rsub=$RSUB psk_suffix='${PSK_SUFFIX:-}'"
