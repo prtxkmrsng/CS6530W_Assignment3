@@ -8,7 +8,7 @@ ipsec.secrets
 *.key
 *.pem
 # build artefacts
-*.zip
+*a3.zip
 # editors / OS
 *.swp
 *~
